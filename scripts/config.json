@@ -6,6 +6,9 @@
     "x-ai/grok-4"
   ],
   "chairman_model": "google/gemini-3-pro-preview",
+  "debate_model": "anthropic/claude-sonnet-4.5",
+  "default_personas": ["skeptic", "pragmatist", "strategist", "risk_assessor"],
+  "max_rounds": 3,
   "timeout_seconds": 120,
-  "_note": "Model slugs are OpenRouter IDs and drift over time - check https://openrouter.ai/models for current ones. chairman_model does not need to be one of council_models."
+  "_note": "Each model entry is either 'provider:model' (e.g. 'ollama:llama3.1' for a free local model via `ollama serve`) or a bare OpenRouter slug (e.g. 'openai/gpt-5.1') kept for backward compatibility. OpenRouter slugs drift - check https://openrouter.ai/models. debate_model drives advisors.py; it does not need to be one of council_models."
 }

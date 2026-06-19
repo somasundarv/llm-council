@@ -16,11 +16,12 @@ import random
 import string
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib import error, request
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from providers import call_model_safe, parse_spec  # noqa: E402
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 HISTORY_DIR = SCRIPT_DIR.parent / "history"
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
 def load_config(path=None):
@@ -29,49 +30,20 @@ def load_config(path=None):
         return json.load(f)
 
 
-def call_model(model, content, api_key, timeout):
-    body = json.dumps({"model": model, "messages": [{"role": "user", "content": content}]}).encode()
-    req = request.Request(
-        OPENROUTER_URL,
-        data=body,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://claude.ai/code",
-            "X-Title": "llm-council-skill",
-        },
-        method="POST",
-    )
-    with request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode())
-    return data["choices"][0]["message"]["content"]
-
-
-def call_model_safe(model, content, api_key, timeout):
-    """Never raises - returns a generic (model-name-free) error string on failure
-    so a failed call can't deanonymize itself when embedded in stage 2."""
-    try:
-        return call_model(model, content, api_key, timeout)
-    except error.HTTPError as e:
-        return f"[ERROR: request failed - HTTP {e.code}]"
-    except Exception:
-        return "[ERROR: request failed or timed out]"
-
-
-def run_parallel(models, content, api_key, timeout):
+def run_parallel(models, content, timeout):
     results = {}
     with ThreadPoolExecutor(max_workers=max(len(models), 1)) as pool:
-        futures = {pool.submit(call_model_safe, m, content, api_key, timeout): m for m in models}
+        futures = {pool.submit(call_model_safe, m, content, timeout): m for m in models}
         for fut in as_completed(futures):
             results[futures[fut]] = fut.result()
     return results
 
 
-def stage1_first_opinions(models, question, api_key, timeout):
-    return run_parallel(models, question, api_key, timeout)
+def stage1_first_opinions(models, question, timeout):
+    return run_parallel(models, question, timeout)
 
 
-def stage2_cross_review(models, question, opinions, api_key, timeout):
+def stage2_cross_review(models, question, opinions, timeout):
     member_ids = list(string.ascii_uppercase[: len(opinions)])
     shuffled = list(opinions.items())
     random.shuffle(shuffled)
@@ -86,10 +58,10 @@ def stage2_cross_review(models, question, opinions, api_key, timeout):
         "missed. Be terse and specific.\n\n"
         f"QUESTION: {question}\n\n{anonymized_block}"
     )
-    return run_parallel(models, review_prompt, api_key, timeout)
+    return run_parallel(models, review_prompt, timeout)
 
 
-def stage3_chairman(chairman_model, question, opinions, reviews, api_key, timeout):
+def stage3_chairman(chairman_model, question, opinions, reviews, timeout):
     opinions_block = "\n\n".join(f"--- {m} ---\n{text}" for m, text in opinions.items())
     reviews_block = "\n\n".join(f"--- review by {m} ---\n{text}" for m, text in reviews.items())
     chairman_prompt = (
@@ -104,7 +76,7 @@ def stage3_chairman(chairman_model, question, opinions, reviews, api_key, timeou
         "Be decisive - don't just average everything into mush.\n\n"
         f"QUESTION: {question}\n\nFIRST OPINIONS:\n{opinions_block}\n\nCROSS-REVIEWS:\n{reviews_block}"
     )
-    return call_model_safe(chairman_model, chairman_prompt, api_key, timeout)
+    return call_model_safe(chairman_model, chairman_prompt, timeout)
 
 
 def render_report(question, opinions, reviews, verdict):
@@ -145,20 +117,23 @@ def main():
     parser.add_argument("--no-history", action="store_true", help="Don't save a transcript under history/")
     args = parser.parse_args()
 
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        print(
-            "ERROR: OPENROUTER_API_KEY is not set.\n"
-            "Get a key at https://openrouter.ai/ and export it, e.g.:\n"
-            "  export OPENROUTER_API_KEY=sk-or-v1-...",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     cfg = load_config(args.config)
     council_models = cfg["council_models"]
     chairman_model = cfg["chairman_model"]
     timeout = cfg.get("timeout_seconds", 120)
+
+    needs_openrouter = any(parse_spec(m)[0] == "openrouter" for m in council_models + [chairman_model])
+    if needs_openrouter and not os.environ.get("OPENROUTER_API_KEY"):
+        print(
+            "ERROR: OPENROUTER_API_KEY is not set, but at least one configured model "
+            "routes through OpenRouter.\n"
+            "Get a key at https://openrouter.ai/ and export it, e.g.:\n"
+            "  export OPENROUTER_API_KEY=sk-or-v1-...\n"
+            "Or switch council_models/chairman_model in config.json to 'ollama:<model>' "
+            "entries to run entirely on local models.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     full_question = args.question
     if args.file:
@@ -167,13 +142,13 @@ def main():
         full_question = f"{args.question}\n\n---\nATTACHED FILE ({args.file}):\n{attached}"
 
     print(f"Stage 1: asking {len(council_models)} models independently...", file=sys.stderr)
-    opinions = stage1_first_opinions(council_models, full_question, api_key, timeout)
+    opinions = stage1_first_opinions(council_models, full_question, timeout)
 
     print("Stage 2: cross-reviewing anonymized answers...", file=sys.stderr)
-    reviews = stage2_cross_review(council_models, full_question, opinions, api_key, timeout)
+    reviews = stage2_cross_review(council_models, full_question, opinions, timeout)
 
     print(f"Stage 3: chairman ({chairman_model}) synthesizing...", file=sys.stderr)
-    verdict = stage3_chairman(chairman_model, full_question, opinions, reviews, api_key, timeout)
+    verdict = stage3_chairman(chairman_model, full_question, opinions, reviews, timeout)
 
     report = render_report(args.question, opinions, reviews, verdict)
     print(report)
