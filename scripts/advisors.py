@@ -31,6 +31,12 @@ def load_json(path):
 
 
 def run_persona_turns(personas, build_prompt, model, timeout):
+    """All personas share one model spec. If it's ollama-backed, run turns one at
+    a time - concurrent generation requests against the same local model still
+    contend for the same limited CPU/RAM and time out on small machines."""
+    if parse_spec(model)[0] == "ollama":
+        return {k: call_model_safe(model, build_prompt(p), timeout) for k, p in personas.items()}
+
     def ask(key, persona):
         return key, call_model_safe(model, build_prompt(persona), timeout)
 

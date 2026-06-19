@@ -15,10 +15,9 @@ import pathlib
 import random
 import string
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from providers import call_model_safe, parse_spec  # noqa: E402
+from providers import call_model_safe, parse_spec, run_parallel  # noqa: E402
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 HISTORY_DIR = SCRIPT_DIR.parent / "history"
@@ -28,15 +27,6 @@ def load_config(path=None):
     cfg_path = pathlib.Path(path) if path else SCRIPT_DIR / "config.json"
     with open(cfg_path) as f:
         return json.load(f)
-
-
-def run_parallel(models, content, timeout):
-    results = {}
-    with ThreadPoolExecutor(max_workers=max(len(models), 1)) as pool:
-        futures = {pool.submit(call_model_safe, m, content, timeout): m for m in models}
-        for fut in as_completed(futures):
-            results[futures[fut]] = fut.result()
-    return results
 
 
 def stage1_first_opinions(models, question, timeout):

@@ -11,6 +11,7 @@ Supported providers:
 """
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib import error, request
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -76,3 +77,21 @@ def call_model_safe(spec, content, timeout):
         return f"[ERROR: request failed - HTTP {e.code}]"
     except Exception as e:
         return f"[ERROR: request failed or timed out - {type(e).__name__}]"
+
+
+def run_parallel(specs, content, timeout):
+    """Run model calls concurrently, except ollama-backed ones, which are run
+    one at a time. Multiple local models loading into RAM simultaneously is what
+    causes timeouts on memory-constrained machines; cloud (openrouter) calls have
+    no such shared-resource bottleneck and stay fully parallel."""
+    ollama_specs = [s for s in specs if parse_spec(s)[0] == "ollama"]
+    other_specs = [s for s in specs if parse_spec(s)[0] != "ollama"]
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=max(len(other_specs), 1)) as pool:
+        futures = {pool.submit(call_model_safe, s, content, timeout): s for s in other_specs}
+        for s in ollama_specs:
+            results[s] = call_model_safe(s, content, timeout)
+        for fut in as_completed(futures):
+            results[futures[fut]] = fut.result()
+    return results
