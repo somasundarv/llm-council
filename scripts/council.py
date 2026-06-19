@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""Multi-LLM council deliberation, adapted from github.com/karpathy/llm-council.
+
+Stage 1: ask N different LLMs (via OpenRouter) the same question independently.
+Stage 2: anonymize the answers and have each model cross-review/rank the set.
+Stage 3: a chairman model synthesizes a final answer, flagging disagreement.
+
+No third-party dependencies - stdlib only, so it runs anywhere python3 runs.
+"""
+import argparse
+import datetime
+import json
+import os
+import pathlib
+import random
+import string
+import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib import error, request
+
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+HISTORY_DIR = SCRIPT_DIR.parent / "history"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+
+def load_config(path=None):
+    cfg_path = pathlib.Path(path) if path else SCRIPT_DIR / "config.json"
+    with open(cfg_path) as f:
+        return json.load(f)
+
+
+def call_model(model, content, api_key, timeout):
+    body = json.dumps({"model": model, "messages": [{"role": "user", "content": content}]}).encode()
+    req = request.Request(
+        OPENROUTER_URL,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://claude.ai/code",
+            "X-Title": "llm-council-skill",
+        },
+        method="POST",
+    )
+    with request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode())
+    return data["choices"][0]["message"]["content"]
+
+
+def call_model_safe(model, content, api_key, timeout):
+    """Never raises - returns a generic (model-name-free) error string on failure
+    so a failed call can't deanonymize itself when embedded in stage 2."""
+    try:
+        return call_model(model, content, api_key, timeout)
+    except error.HTTPError as e:
+        return f"[ERROR: request failed - HTTP {e.code}]"
+    except Exception:
+        return "[ERROR: request failed or timed out]"
+
+
+def run_parallel(models, content, api_key, timeout):
+    results = {}
+    with ThreadPoolExecutor(max_workers=max(len(models), 1)) as pool:
+        futures = {pool.submit(call_model_safe, m, content, api_key, timeout): m for m in models}
+        for fut in as_completed(futures):
+            results[futures[fut]] = fut.result()
+    return results
+
+
+def stage1_first_opinions(models, question, api_key, timeout):
+    return run_parallel(models, question, api_key, timeout)
+
+
+def stage2_cross_review(models, question, opinions, api_key, timeout):
+    member_ids = list(string.ascii_uppercase[: len(opinions)])
+    shuffled = list(opinions.items())
+    random.shuffle(shuffled)
+    anonymized_block = "\n\n".join(
+        f"MEMBER {label}: {text}" for label, (_, text) in zip(member_ids, shuffled)
+    )
+    review_prompt = (
+        "You are an impartial reviewer on a multi-LLM council. Below are anonymized "
+        "responses (Member labels) from different council members to the same question. "
+        "Rank them by accuracy and usefulness, and call out: (a) any factual or claim "
+        "conflicts between members, (b) any insight one member caught that the others "
+        "missed. Be terse and specific.\n\n"
+        f"QUESTION: {question}\n\n{anonymized_block}"
+    )
+    return run_parallel(models, review_prompt, api_key, timeout)
+
+
+def stage3_chairman(chairman_model, question, opinions, reviews, api_key, timeout):
+    opinions_block = "\n\n".join(f"--- {m} ---\n{text}" for m, text in opinions.items())
+    reviews_block = "\n\n".join(f"--- review by {m} ---\n{text}" for m, text in reviews.items())
+    chairman_prompt = (
+        "You are the Chairman of an LLM council. You are given a question, the "
+        "independent first-opinion answers from each council member (attributed by "
+        "model name), and each member's cross-review of the anonymized answer set. "
+        "Produce a single final answer that:\n"
+        "1. States a clear recommendation/answer\n"
+        "2. Notes confidence and how much the council agreed\n"
+        "3. Explicitly flags any unresolved disagreement between members and why it matters\n"
+        "4. Synthesizes the best insights across all members rather than just picking one\n"
+        "Be decisive - don't just average everything into mush.\n\n"
+        f"QUESTION: {question}\n\nFIRST OPINIONS:\n{opinions_block}\n\nCROSS-REVIEWS:\n{reviews_block}"
+    )
+    return call_model_safe(chairman_model, chairman_prompt, api_key, timeout)
+
+
+def render_report(question, opinions, reviews, verdict):
+    lines = [
+        "## LLM Council Verdict\n",
+        f"**Question:** {question}\n",
+        verdict,
+        "\n---\n",
+        "<details><summary>Individual council member answers</summary>\n",
+    ]
+    for m, text in opinions.items():
+        lines.append(f"\n**{m}:**\n{text}\n")
+    lines.append("\n</details>\n\n<details><summary>Cross-review (each member ranking the anonymized set)</summary>\n")
+    for m, text in reviews.items():
+        lines.append(f"\n**Review by {m}:**\n{text}\n")
+    lines.append("\n</details>")
+    return "\n".join(lines)
+
+
+def save_history(question, opinions, reviews, verdict):
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = HISTORY_DIR / f"{ts}.json"
+    with open(path, "w") as f:
+        json.dump(
+            {"question": question, "opinions": opinions, "reviews": reviews, "verdict": verdict, "timestamp": ts},
+            f,
+            indent=2,
+        )
+    return path
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Run a question/task through a council of different LLMs.")
+    parser.add_argument("question", help="The question, decision, or task to put to the council")
+    parser.add_argument("--file", help="Path to a file (doc, RFC, diff, RCA, etc.) to attach as context", default=None)
+    parser.add_argument("--config", help="Path to config.json", default=None)
+    parser.add_argument("--no-history", action="store_true", help="Don't save a transcript under history/")
+    args = parser.parse_args()
+
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        print(
+            "ERROR: OPENROUTER_API_KEY is not set.\n"
+            "Get a key at https://openrouter.ai/ and export it, e.g.:\n"
+            "  export OPENROUTER_API_KEY=sk-or-v1-...",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    cfg = load_config(args.config)
+    council_models = cfg["council_models"]
+    chairman_model = cfg["chairman_model"]
+    timeout = cfg.get("timeout_seconds", 120)
+
+    full_question = args.question
+    if args.file:
+        with open(args.file) as f:
+            attached = f.read()
+        full_question = f"{args.question}\n\n---\nATTACHED FILE ({args.file}):\n{attached}"
+
+    print(f"Stage 1: asking {len(council_models)} models independently...", file=sys.stderr)
+    opinions = stage1_first_opinions(council_models, full_question, api_key, timeout)
+
+    print("Stage 2: cross-reviewing anonymized answers...", file=sys.stderr)
+    reviews = stage2_cross_review(council_models, full_question, opinions, api_key, timeout)
+
+    print(f"Stage 3: chairman ({chairman_model}) synthesizing...", file=sys.stderr)
+    verdict = stage3_chairman(chairman_model, full_question, opinions, reviews, api_key, timeout)
+
+    report = render_report(args.question, opinions, reviews, verdict)
+    print(report)
+
+    if not args.no_history:
+        path = save_history(args.question, opinions, reviews, verdict)
+        print(f"\n(transcript saved to {path})", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
