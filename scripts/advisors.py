@@ -135,7 +135,16 @@ def main():
     parser.add_argument("--no-history", action="store_true", help="Don't save a transcript under history/")
     args = parser.parse_args()
 
-    cfg = load_json(args.config or SCRIPT_DIR / "config.json")
+    cfg_path = pathlib.Path(args.config) if args.config else SCRIPT_DIR / "config.json"
+    if not cfg_path.exists():
+        print(
+            f"ERROR: {cfg_path} not found.\n"
+            f"Run `python3 {SCRIPT_DIR / 'setup.py'}` to create one (or copy "
+            "config.example.json to config.json and edit it directly).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    cfg = load_json(cfg_path)
     all_personas = load_json(args.personas_file or SCRIPT_DIR / "personas.json")
 
     keys = args.personas.split(",") if args.personas else cfg.get("default_personas", list(all_personas)[:4])

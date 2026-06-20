@@ -25,6 +25,14 @@ HISTORY_DIR = SCRIPT_DIR.parent / "history"
 
 def load_config(path=None):
     cfg_path = pathlib.Path(path) if path else SCRIPT_DIR / "config.json"
+    if not cfg_path.exists():
+        print(
+            f"ERROR: {cfg_path} not found.\n"
+            f"Run `python3 {SCRIPT_DIR / 'setup.py'}` to create one (or copy "
+            "config.example.json to config.json and edit it directly).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     with open(cfg_path) as f:
         return json.load(f)
 

@@ -1,0 +1,14 @@
+{
+  "council_models": [
+    "ollama:qwen3:1.7b",
+    "ollama:deepseek-r1:1.5b",
+    "ollama:gemma3:1b",
+    "ollama:llama3.2:1b"
+  ],
+  "chairman_model": "ollama:qwen3:1.7b",
+  "debate_model": "ollama:qwen3:1.7b",
+  "default_personas": ["skeptic", "pragmatist", "strategist", "risk_assessor"],
+  "max_rounds": 3,
+  "timeout_seconds": 300,
+  "_note": "This is the template, tracked in git. Run `python3 setup.py` to generate your own scripts/config.json from it (gitignored - your personal model choices aren't committed). See docs/CONFIGURATION.md for the full provider/model reference."
+}

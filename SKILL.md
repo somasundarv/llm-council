@@ -14,31 +14,22 @@ Two deliberation modes, both adapted from [karpathy/llm-council](https://github.
 
 ## Setup (one-time)
 
-Pick a provider per model - mix and match freely:
+`scripts/config.json` is gitignored - it's the user's personal model choice, never committed. If it doesn't exist yet (fresh clone, or this is the first run in a new environment), run the interactive wizard:
 
-- **OpenRouter** (cloud, one key → GPT, Gemini, Grok, Claude, Llama, etc.): `export OPENROUTER_API_KEY=sk-or-v1-...` (get one at https://openrouter.ai/, fund with credits or auto-topup).
-- **Ollama** (local, free, no key): install from https://ollama.com/, run `ollama serve`, then `ollama pull <model>` for whatever you want to use (e.g. `ollama pull llama3.1`).
-
-Model entries throughout `scripts/config.json` are either `provider:model` (e.g. `ollama:llama3.1`) or a bare slug (e.g. `openai/gpt-5.1`), which is treated as OpenRouter for backward compatibility:
-
-```json
-{
-  "council_models": [
-    "openai/gpt-5.1",
-    "google/gemini-3-pro-preview",
-    "anthropic/claude-sonnet-4.5",
-    "ollama:llama3.1"
-  ],
-  "chairman_model": "google/gemini-3-pro-preview",
-  "debate_model": "anthropic/claude-sonnet-4.5",
-  "default_personas": ["skeptic", "pragmatist", "strategist", "risk_assessor"],
-  "max_rounds": 3
-}
+```bash
+python3 ~/.claude/skills/llm-council/scripts/setup.py
 ```
 
-Model slugs are OpenRouter IDs and drift over time - check https://openrouter.ai/models before relying on the defaults. Edit `config.json` directly to add/remove council members, change the chairman/debate model, swap in Ollama models to cut API spend, or pick which personas debate by default. No code changes needed. Running entirely on `ollama:` entries needs no API key at all.
+It walks through council members, chairman model, debate model, rounds, and timeout, then writes `config.json` from the tracked `config.example.json` template. If a user asks to "configure the models" or "set up llm-council," run this script rather than hand-editing JSON for them - it's built for exactly that.
 
-Personas live in `scripts/personas.json` (8 defined: skeptic, pragmatist, strategist, risk_assessor, ethicist, data_analyst, innovator, customer_advocate) - each is just a label + system prompt, fully editable, and you can add more.
+Two providers, mixed freely in the same config:
+
+- **OpenRouter** (cloud, one key → GPT, Gemini, Grok, Claude, Llama, etc.): `export OPENROUTER_API_KEY=sk-or-v1-...` (get one at https://openrouter.ai/, fund with credits or auto-topup). Billed per-token regardless of any chat-product subscription the user already has to that vendor.
+- **Ollama** (local, free, no key): install from https://ollama.com/, run `ollama serve`, then `ollama pull <model>` for whatever's configured. Pick model sizes that fit the machine's RAM - see `docs/CONFIGURATION.md` for a sizing table; on 8GB or less, stick to ~1-2B parameter tags.
+
+Model entries are either `provider:model` (e.g. `ollama:qwen3:1.7b`) or a bare slug (e.g. `openai/gpt-5.1`), treated as OpenRouter for backward compatibility. Full reference, including why concurrent Ollama calls are serialized internally to avoid timeouts on small machines: `docs/CONFIGURATION.md`.
+
+Personas live in `scripts/personas.json` (8 defined: skeptic, pragmatist, strategist, risk_assessor, ethicist, data_analyst, innovator, customer_advocate) - each is just a label + system prompt, fully editable, and you can add more. Unlike `config.json`, this file is tracked in git.
 
 ## Running it
 
