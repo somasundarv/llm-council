@@ -1,6 +1,11 @@
 ---
 name: llm-council
 description: Puts a question, decision, or document to either a council of different LLMs (GPT, Gemini, Grok, Claude, or free local Ollama models) that peer-review each other, or a panel of named advisor personas (Skeptic, Strategist, Risk Assessor, etc.) that debate in rounds to a verdict - adapted from karpathy/llm-council and jacob-bd/the-ai-counsel. General-purpose - not tied to any team or domain (works for SRE incident/rollback calls, engineering design/architecture decisions, product or process questions, document/RFC/RCA review, anything where multiple independent takes reduce single-model blind spots). Use on-demand for a "second opinion," "council review," or "advisor debate" on a high-stakes call, for cross-checking a draft doc, or wired into a scheduled routine as a recurring digest or pre-flight sanity check for other automations. Trigger on "/llm-council", "ask the council", "get a second opinion from other models", "debate this with advisors", "cross-check this with different LLMs".
+permissions:
+  network: true          # calls out to OpenAI/Gemini/Grok/OpenRouter/Ollama HTTP APIs
+  subprocess: true        # shells out to the `claude` CLI for the claude: provider
+  env: [OPENROUTER_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, XAI_API_KEY]  # read only, used solely to authenticate outbound API calls, never logged or transmitted elsewhere
+  filesystem: [scripts/config.json, history/]  # local config read + debate/council history write
 ---
 
 # LLM Council
