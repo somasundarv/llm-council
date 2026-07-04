@@ -9,6 +9,8 @@
 
 A [Claude Code](https://claude.com/claude-code) Skill, runnable standalone as plain Python. Adapted from [karpathy/llm-council](https://github.com/karpathy/llm-council) (the original 3-stage deliberation pattern) and the dual Council/Advisors split popularized by [jacob-bd/the-ai-counsel](https://github.com/jacob-bd/the-ai-counsel) — reimplemented from scratch as a ~600-line, zero-dependency tool rather than a FastAPI/React app, so it installs in seconds and runs anywhere `python3` does.
 
+
+> **Privacy note:** any model configured through a cloud provider (OpenRouter) sends your question text to that provider. For confidential material — incident details, unreleased designs — use local `ollama:` models only.
 General-purpose, not tied to any team or domain: an SRE rollback call, an engineering architecture decision, a product prioritization question, or a review pass on an RFC/design doc/RCA all fit the same pattern — multiple independent takes catch what one model misses.
 
 ## Two modes
